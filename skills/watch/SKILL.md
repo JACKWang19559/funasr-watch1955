@@ -7,6 +7,16 @@ description: Watch a video (URL or local path). Downloads with yt-dlp, extracts 
 
 You don't have a video input; this skill gives you one. A Python script gets captions first, optionally downloads the video, extracts frames as JPEGs (scene-aware, or fast keyframes at `efficient` detail), gets a timestamped transcript (native captions first, then FunASR local transcription as fallback), and prints frame paths. You then `Read` each frame path to see the images and combine them with the transcript to answer the user.
 
+## Runtime defaults
+
+Use CPU FSMN-VAD segmentation with CUDA SenseVoiceSmall ASR when available.
+`WATCH_TRANSCRIBE_DEVICE=auto` and `WATCH_VAD_DEVICE=cpu` are the defaults.
+`WATCH_VAD_DEVICE=auto` explicitly follows ASR placement. Without CUDA, use CPU.
+Douyin URLs automatically use a separate browser cookie cache; selected links
+with `modal_id` are normalized. Manual login or verification, when required,
+uses `scripts/auto_cookies.py <URL> --interactive --timeout 180`. Do not print
+cookie values or automate verification challenges.
+
 ## Scripts location
 
 All scripts live under `./scripts/` (sibling of this SKILL.md). On **Windows**, use `py` to run Python scripts; on macOS/Linux use `python3`. Examples below use `py` (Windows default).

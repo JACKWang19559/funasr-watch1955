@@ -6,8 +6,8 @@
     "name": "JACKWang19559",
     "url": "https://github.com/JACKWang19559"
   },
-  "homepage": "https://github.com/JACKWang19559/trae-funasr-watch",
-  "repository": "https://github.com/JACKWang19559/trae-funasr-watch",
+  "homepage": "https://github.com/JACKWang19559/funasr-watch1955",
+  "repository": "https://github.com/JACKWang19559/funasr-watch1955",
   "license": "MIT",
   "keywords": [
     "video",
@@ -31,7 +31,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/JACKWang19559/trae-funasr-watch",
+    "websiteURL": "https://github.com/JACKWang19559/funasr-watch1955",
     "defaultPrompt": "Watch this video and tell me what's in it: <paste-url-or-path>",
     "brandColor": "#E11D48",
     "screenshots": [],

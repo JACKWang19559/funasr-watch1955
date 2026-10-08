@@ -1,0 +1,44 @@
+{
+  "cpu": "Intel Core i7-11800H",
+  "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU 4GB",
+  "torch": "2.5.1+cu121",
+  "funasr": "1.4.16",
+  "model": "SenseVoiceSmall + FSMN-VAD",
+  "cpu_threads": 4,
+  "batch_size_s": 300,
+  "warmup_audio_seconds": 5,
+  "measurement": "One sequential run per mode after warmup, same in-memory 621.32s audio; download, decoding, model load and video frames excluded.",
+  "results": [
+    {
+      "mode": "gpu",
+      "asr": "cuda",
+      "vad": "cuda",
+      "audio_seconds": 621.32,
+      "model_load_seconds": 2.87,
+      "inference_seconds": 32.75,
+      "characters": 3245,
+      "peak_allocated_mib": 2878.6
+    },
+    {
+      "mode": "hybrid",
+      "asr": "cuda",
+      "vad": "cpu",
+      "audio_seconds": 621.32,
+      "model_load_seconds": 2.56,
+      "inference_seconds": 30.86,
+      "characters": 3245,
+      "peak_allocated_mib": 2876.5
+    },
+    {
+      "mode": "cpu",
+      "asr": "cpu",
+      "vad": "cpu",
+      "audio_seconds": 621.32,
+      "model_load_seconds": 1.83,
+      "inference_seconds": 38.55,
+      "characters": 3245,
+      "peak_allocated_mib": 0
+    }
+  ],
+  "default_configuration_changed": false
+}

@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
+from auto_cookies import acquire, cookie_file_matches, enabled, normalize_url, resolve_video, setting, CookieError
+
 
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".wmv"}
 
@@ -27,7 +29,7 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".wmv"}
 #
 # 注意：这些值也可以写在 ~/.config/watch/.env 文件里（由 config.py 管理）。
 # _cookie_args() 会动态读取 .env，所以这里只用环境变量作为初始默认值。
-DEFAULT_BROWSER = "edge"
+DEFAULT_BROWSER = ""
 
 
 def is_url(source: str) -> bool:
@@ -54,85 +56,73 @@ def resolve_local(path: str) -> dict:
     }
 
 
-def _cookie_args(source: str = "") -> list[str]:
-    """构造 yt-dlp 的 cookie 参数，根据 URL 域名智能选择 cookie 来源。
-
-    优先级：
-    1. 如果 WATCH_COOKIE_FILE 指向的 cookie 文件包含目标域名的 cookie，用它
-    2. 否则回退到 WATCH_BROWSER 指定的浏览器 cookie
-
-    这样同一个 cookies.txt 可以放多个网站的 cookie（yt-dlp 会按域名过滤），
-    而未在 cookie 文件中的网站（如抖音）会自动回退到浏览器 cookie。
-
-    Args:
-        source: 视频 URL 或本地路径。为空或本地路径时，保持原有行为（用 cookie 文件）
-
-    Returns:
-        参数列表（如 ["--cookies", "C:/path/to/cookies.txt"]），
-        或 ["--cookies-from-browser", "edge"]，或空列表（禁用时）
-    """
-    # 动态读取 .env 文件（覆盖模块加载时的环境变量）
-    from config import read_env_file
-    env = read_env_file()
-
-    def _get(key: str, default: str = "") -> str:
-        """优先环境变量，其次 .env 文件，最后默认值。"""
-        return os.environ.get(key) or env.get(key) or default
-
-    cookie_file = _get("WATCH_COOKIE_FILE", "")
-    browser = _get("WATCH_BROWSER", DEFAULT_BROWSER)
-
-    # 提取 source 的域名用于匹配 cookie 文件
-    source_domain = ""
-    if source and is_url(source):
-        source_domain = urlparse(source).netloc.lower()
-
-    # 1. 检查 cookie 文件是否包含目标域名的 cookie
-    if cookie_file:
-        cookie_path = Path(cookie_file).expanduser()
-        if cookie_path.exists():
-            # 如果无法识别域名（本地文件或空 URL），直接用 cookie 文件
-            if not source_domain:
-                return ["--cookies", str(cookie_path)]
-            # 读取 cookie 文件，检查是否包含目标域名
-            # Netscape cookie 格式：每行用 tab 分隔，第 1 列是域名
-            try:
-                content = cookie_path.read_text(encoding="utf-8", errors="ignore")
-                for line in content.splitlines():
-                    if line.startswith("#") or not line.strip():
-                        continue
-                    parts = line.split("\t")
-                    if len(parts) >= 7:
-                        cookie_domain = parts[0].lower().lstrip(".")
-                        # 双向匹配：cookie 域名是 URL 域名的后缀，或反之
-                        if cookie_domain and (
-                            source_domain.endswith(cookie_domain)
-                            or cookie_domain.endswith(source_domain)
-                        ):
-                            return ["--cookies", str(cookie_path)]
-                # cookie 文件不包含目标域名，回退到浏览器 cookie
-                print(
-                    f"[watch] cookie file has no cookies for {source_domain}, "
-                    f"falling back to browser cookies",
-                    file=sys.stderr,
-                )
-            except OSError:
-                # 读取失败，回退到浏览器 cookie
-                print(
-                    f"[watch] failed to read cookie file, "
-                    f"falling back to browser cookies",
-                    file=sys.stderr,
-                )
-        else:
-            print(
-                f"[watch] warning: WATCH_COOKIE_FILE={cookie_file} not found, "
-                f"falling back to browser cookies",
-                file=sys.stderr,
-            )
-    # 2. 用浏览器 cookie
-    if browser:
+def _cookie_args(source: str = "", *, force: bool = False) -> list[str]:
+    """Prefer explicit credentials, then the automatic site-specific cache."""
+    cookie_file = setting("WATCH_COOKIE_FILE")
+    if not force and cookie_file and cookie_file_matches(Path(cookie_file).expanduser(), source):
+        return ["--cookies", str(Path(cookie_file).expanduser())]
+    browser = setting("WATCH_BROWSER", DEFAULT_BROWSER)
+    if not force and browser:
         return ["--cookies-from-browser", browser]
+    if enabled(source):
+        try:
+            return acquire(source, force=force).arguments()
+        except CookieError as exc:
+            raise SystemExit(f"Automatic cookies failed: {exc}. Run codex_watch.py --cookies --interactive <URL> if manual verification is needed.") from None
     return []
+
+
+_AUTO_REFRESHED: set[str] = set()
+_BROWSER_RESOLVED: set[str] = set()
+
+
+def _replace_cookie_args(cmd: list[str], arguments: list[str]) -> list[str]:
+    result: list[str] = []
+    index = 0
+    while index < len(cmd):
+        if cmd[index] in {"--cookies", "--cookies-from-browser", "--user-agent", "--referer"}:
+            index += 2
+        else:
+            result.append(cmd[index])
+            index += 1
+    position = result.index("--")
+    return result[:position] + arguments + result[position:]
+
+
+def _run_ytdlp(cmd: list[str], source: str) -> subprocess.CompletedProcess:
+    cmd = cmd[:1] + ["--socket-timeout", "20", "--retries", "1", "--extractor-retries", "0"] + cmd[1:]
+    site = urlparse(source).hostname or ""
+    if site in _BROWSER_RESOLVED and enabled(source):
+        return _run_browser_resolved(cmd, source)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    output = (result.stdout or "") + (result.stderr or "")
+    sys.stderr.write(output)
+    needs_cookies = any(message in output.lower() for message in ("fresh cookies", "http error 403", "cookies are needed"))
+    if needs_cookies and enabled(source) and site not in _AUTO_REFRESHED:
+        _AUTO_REFRESHED.add(site)
+        print("[watch] site rejected the session; refreshing cookies once…", file=sys.stderr)
+        cmd = _replace_cookie_args(cmd, _cookie_args(source, force=True))
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        sys.stderr.write((result.stdout or "") + (result.stderr or ""))
+    output = (result.stdout or "") + (result.stderr or "")
+    if any(message in output.lower() for message in ("fresh cookies", "http error 403", "cookies are needed")) and enabled(source):
+        return _run_browser_resolved(cmd, source)
+    return result
+
+
+def _run_browser_resolved(cmd: list[str], source: str) -> subprocess.CompletedProcess:
+    try:
+        info_path = resolve_video(source)
+    except CookieError as exc:
+        raise SystemExit(f"Browser video resolution failed: {exc}") from None
+    position = cmd.index("--")
+    cmd = cmd[:position] + ["--http-chunk-size", "5M", "--load-info-json", str(info_path)]
+    print("[watch] using video media resolved by the local browser…", file=sys.stderr)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    sys.stderr.write((result.stdout or "") + (result.stderr or ""))
+    if result.returncode == 0:
+        _BROWSER_RESOLVED.add(urlparse(source).hostname or "")
+    return result
 
 
 def _pick_subtitle(out_dir: Path) -> Path | None:
@@ -182,6 +172,7 @@ def fetch_captions(url: str, out_dir: Path) -> dict:
     if shutil.which("yt-dlp") is None:
         raise SystemExit("yt-dlp is not installed. Install with: brew install yt-dlp")
 
+    url = normalize_url(url)
     out_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(out_dir / "video.%(ext)s")
     cmd = [
@@ -205,7 +196,7 @@ def fetch_captions(url: str, out_dir: Path) -> dict:
         "--",
         url,
     ]
-    subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr)
+    _run_ytdlp(cmd, url)
     subtitle = _pick_subtitle(out_dir)
     info = _read_info(out_dir / "video.info.json", url)
     return {
@@ -241,6 +232,7 @@ def download_url(
     if shutil.which("yt-dlp") is None:
         raise SystemExit("yt-dlp is not installed. Install with: brew install yt-dlp")
 
+    url = normalize_url(url)
     out_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(out_dir / "video.%(ext)s")
 
@@ -273,7 +265,7 @@ def download_url(
 
     # yt-dlp may exit non-zero if a subtitle variant fails (e.g. 429) even when
     # the video itself downloaded fine. Treat "video file present" as success.
-    result = subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr)
+    result = _run_ytdlp(cmd, url)
     video = _pick_video(out_dir)
     if video is None:
         raise SystemExit(

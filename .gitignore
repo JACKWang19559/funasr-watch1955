@@ -31,3 +31,13 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Local runtimes, weights and verification artifacts
+.venv/
+.models/
+installation-test/
+tools/
+codex-adapter/runtime.json
+codex-adapter/requirements.lock.txt
+codex-adapter/gpu-validation.json
+codex-adapter/device-comparison.json

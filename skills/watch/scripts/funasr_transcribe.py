@@ -5,7 +5,7 @@
 无需 API key，完全离线运行（首次运行需下载模型）。
 
 SenseVoiceSmall 特点：
-- 模型大小：234MB
+- 模型权重约 0.9GB（随版本变化）
 - 中文识别效果最佳（CER 7.81%）
 - CPU 上 17x 实时，GPU 上更快
 - 支持标点恢复和时间戳输出
@@ -28,106 +28,77 @@ from ffmpeg_utils import find_ffmpeg, find_ffprobe
 
 
 # SenseVoiceSmall 模型 ID（从 ModelScope 自动下载）
-MODEL_ID = "iic/SenseVoiceSmall"
-VAD_MODEL_ID = "fsmn-vad"
+MODEL_ID = os.environ.get("WATCH_MODEL_DIR") or "iic/SenseVoiceSmall"
+VAD_MODEL_ID = os.environ.get("WATCH_VAD_MODEL_DIR") or "fsmn-vad"
 
 # 单例模型实例（避免重复加载）
 _model = None
 
 
+def _setting(name: str, default: str) -> str:
+    value = os.environ.get(name)
+    if value is None:
+        from config import read_env_file
+        value = read_env_file().get(name, default)
+    return value.strip().lower() or default
+
+
 def _get_device() -> str:
-    """动态读取设备配置（cuda/cpu/auto）。
-
-    优先级：环境变量 > ~/.config/watch/.env > auto
-
-    Returns:
-        设备字符串："cuda"、"cpu" 或自动检测后的结果
-    """
-    # 优先环境变量
-    device = os.environ.get("WATCH_TRANSCRIBE_DEVICE", "")
-
-    # 其次读 .env 文件
-    if not device:
-        try:
-            from config import read_env_file
-            env = read_env_file()
-            device = env.get("WATCH_TRANSCRIBE_DEVICE", "")
-        except ImportError:
-            pass
-
-    # 默认 auto：自动检测 CUDA 可用性
-    if not device or device == "auto":
+    """Resolve ASR placement; auto prefers CUDA with a CPU fallback."""
+    device = _setting("WATCH_TRANSCRIBE_DEVICE", "auto")
+    if device == "auto":
         try:
             import torch
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
-
     return device
 
 
+def _get_vad_device(asr_device: str) -> str:
+    """Default to CPU segmentation; auto explicitly follows the ASR device."""
+    device = _setting("WATCH_VAD_DEVICE", "cpu")
+    return asr_device if device == "auto" else device
+
+
 def _get_model():
-    """加载 FunASR 模型（单例模式，避免重复加载）。
-
-    使用 SenseVoiceSmall + VAD 模型实现长音频自动分段转写。
-    首次调用时会从 ModelScope 下载模型（约 234MB）。
-
-    Returns:
-        FunASR AutoModel 实例
-
-    Raises:
-        SystemExit: 如果 FunASR 未安装或模型加载失败
-    """
+    """Load SenseVoiceSmall and FSMN-VAD once, on independent devices."""
     global _model
     if _model is not None:
         return _model
-
     try:
         from funasr import AutoModel
     except ImportError as exc:
-        raise SystemExit(
-            f"FunASR is not installed. Install with: pip install funasr "
-            f"(import error: {exc})"
-        )
+        raise SystemExit(f"FunASR is not installed. Install with: pip install funasr (import error: {exc})")
 
     device = _get_device()
-    print(f"[watch] loading FunASR model (device={device})…", file=sys.stderr)
+    vad_device = _get_vad_device(device)
+    print(f"[watch] loading FunASR model (ASR={device}, VAD={vad_device})…", file=sys.stderr)
 
-    try:
-        _model = AutoModel(
+    def build(asr: str, vad: str):
+        return AutoModel(
             model=MODEL_ID,
             vad_model=VAD_MODEL_ID,
-            device=device,
-            # 禁用标点恢复模型（SenseVoice 已内置标点）
+            device=asr,
+            vad_kwargs={"device": vad},
+            disable_update=True,
             punc_model=None,
-            # 禁用说话人分离（不需要）
             spk_model=None,
         )
-        print(
-            f"[watch] FunASR model loaded (SenseVoiceSmall + VAD, {device})",
-            file=sys.stderr,
-        )
-    except Exception as exc:
-        # GPU 加载失败时自动回退到 CPU
-        if device == "cuda":
-            print(
-                f"[watch] GPU model load failed ({exc}), falling back to CPU…",
-                file=sys.stderr,
-            )
-            _model = AutoModel(
-                model=MODEL_ID,
-                vad_model=VAD_MODEL_ID,
-                device="cpu",
-                punc_model=None,
-                spk_model=None,
-            )
-            print(
-                "[watch] FunASR model loaded (SenseVoiceSmall + VAD, cpu fallback)",
-                file=sys.stderr,
-            )
-        else:
-            raise SystemExit(f"Failed to load FunASR model: {exc}")
 
+    try:
+        _model = build(device, vad_device)
+    except Exception as exc:
+        if device.startswith("cuda") or vad_device.startswith("cuda"):
+            print(f"[watch] GPU model load failed ({exc}), falling back to CPU…", file=sys.stderr)
+            try:
+                _model = build("cpu", "cpu")
+            except Exception as fallback_exc:
+                raise SystemExit(f"Failed to load FunASR model on CPU: {fallback_exc}") from fallback_exc
+            device = vad_device = "cpu"
+        else:
+            raise SystemExit(f"Failed to load FunASR model: {exc}") from exc
+    print(f"[watch] FunASR model loaded (ASR={device}, VAD={vad_device})", file=sys.stderr)
     return _model
 
 
