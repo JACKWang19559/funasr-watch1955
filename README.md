@@ -1,328 +1,203 @@
-# Trae FunASR Watch — 视频理解插件
+# funasr-watch
 
-> 基于 [bradautomates/claude-video](https://github.com/bradautomates/claude-video) 改造的 Trae 视频理解插件，使用阿里达摩院 **FunASR + SenseVoiceSmall** 替代 Whisper API，实现完全本地化的视频转写与内容理解。
+为 Codex、Trae 和其他 AI Agent 提供视频理解能力：使用 yt-dlp 获取视频和字幕，FFmpeg 抽取画面，FunASR + SenseVoiceSmall 在本地完成语音转写。模型下载完成后，本地视频的转写无需联网或 API Key。
 
-## 简介
+基于 [bradautomates/claude-video](https://github.com/bradautomates/claude-video) 改造，保留原生字幕优先、场景抽帧和工作目录自动检测。
 
-为 AI Agent 提供原生的视频输入能力。当用户粘贴视频 URL（YouTube、Bilibili、抖音、TikTok、Twitch 等 yt-dlp 支持的平台）或指向本地视频文件时，插件会自动：
+## 功能
 
-1. **下载视频** — 使用 `yt-dlp` 拉取视频流（仅有字幕时优先拉字幕）
-2. **抽取帧** — 使用 `ffmpeg` 按场景感知/关键帧/均匀采样策略生成 JPEG 帧
-3. **获取字幕** — 优先拉取原生字幕；缺失时回退到 **FunASR 本地转写**（SenseVoiceSmall 模型），无需 API Key，完全离线
-4. **输出报告** — 打印帧路径 + 带时间戳的字幕，并保存 `transcript.txt` 到工作目录，方便后续查看和复用
+- 支持本地视频及 yt-dlp 支持的视频平台。
+- 优先获取原生字幕，缺失时使用 SenseVoiceSmall + FSMN-VAD 转写。
+- 默认采用 **CPU 语音分段 + GPU 语音识别**；CUDA 不可用时使用 CPU。
+- 抖音自动获取 Cookie、缓存和失效刷新，支持精选页 `modal_id` 链接。
+- 独立浏览器会话解析公开视频媒体地址，处理 yt-dlp 详情接口仍返回 403 的情况。
+- 提供 Codex 安装脚本；保留 Trae 插件入口和直接命令行使用。
+- 生成画面、时间点及 `transcript.txt`，后续分析可复用已有文件。
 
-## 核心特性
+## 安装依赖
 
-### 🎯 FunASR 本地转写（替代 Whisper API）
-
-- **零 API Key** — 模型首次下载后完全离线（约 234MB）
-- **中文识别最佳** — SenseVoiceSmall CER 7.81%，针对中文优化
-- **本地执行** — 音频数据不离开本机，隐私安全
-- **GPU 加速** — 自动检测 CUDA，无 GPU 时回退 CPU
-- **标签自动过滤** — 自动清理 SenseVoiceSmall 输出中的语言/情绪/事件标签（`<|zh|>`, `<|HAPPY|>`, `<|BGM|>`, `<|woitn|>` 等）
-
-### 🍪 多平台 Cookie 支持
-
-- 动态识别 URL 域名（Bilibili / 抖音 ）
-- 支持 Netscape 格式 `cookies.txt` 和 JSON 格式 `cookies.json`
-- 自动选择对应平台的 Cookie 源，解决登录/会员视频下载问题
-
-### 🖼️ 智能帧抽取
-
-- 场景感知（scene-aware）抽帧，捕捉画面变化
-- 关键帧快速通道（keyframe-fast），适合长视频
-- 帧去重（frame-delta），自动丢弃近似重复帧
-- 自适应帧率（最高 2 fps），根据视频时长动态调整
-
-### 💾 字幕持久化
-
-- 转写完成后，字幕同时打印到 stdout 并保存到工作目录的 `transcript.txt`
-- 格式：`[MM:SS] 文本内容`，便于检索和复用
-
-## 环境要求
-
-- **Python 3.10+**（Windows 用 `py` 启动器，macOS/Linux 用 `python3`）
-- **ffmpeg / ffprobe**（Windows 推荐：`winget install Gyan.FFmpeg`）
-- **yt-dlp**（`pip install yt-dlp`）
-- **FunASR**（`pip install funasr torch`）
-  - GPU 加速（可选）：`pip install torch --index-url https://download.pytorch.org/whl/cu121`
-
-## 安装
-
-> ⚠️ **当前状态：尚未上架 Trae 官方插件市场。** 本项目处于开发阶段，需通过以下手动方式安装。后续上架插件市场后会更新此文档。
-
-### 方式一：手动安装（当前唯一方式）
-
-#### 步骤 1：克隆仓库
+需要 Python 3.10+、完整版本的 FFmpeg/ffprobe 和 Microsoft Edge（抖音自动 Cookie 的默认浏览器）。
 
 ```bash
-git clone https://github.com/JACKWang19559/trae-funasr-watch.git
+# 使用当前仓库地址，本地目录命名为 funasr-watch。
+git clone https://github.com/JACKWang19559/funasr-watch1955.git funasr-watch
+cd funasr-watch
+python -m venv .venv
 ```
 
-#### 步骤 2：定位 Trae 插件目录
-
-Trae 的插件存放路径因平台而异：
-
-| 平台 | 路径 |
-|------|------|
-| Windows | `C:\Users\<用户名>\.trae-cn\plugins\` |
-| macOS | `~/.trae-cn/plugins/` |
-| Linux | `~/.trae-cn/plugins/` |
-
-#### 步骤 3：将插件放入 Trae 插件目录
-
-将仓库中的 `watch/0.2.0/` 整个目录复制到 Trae 插件目录下。例如 Windows：
+Windows PowerShell：
 
 ```powershell
-# 复制到 Trae 插件目录（需按实际路径调整）
-Copy-Item -Path "trae-funasr-watch\watch\0.2.0" -Destination "$env:USERPROFILE\.trae-cn\plugins\trae-funasr-watch\" -Recurse
+winget install --id Gyan.FFmpeg -e
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 ```
 
-或将其作为独立插件包放在自定义路径下，Trae 会自动扫描识别。
-
-#### 步骤 4：重启 Trae IDE
-
-重启后，插件会被 Trae 自动加载。可在 Trae 的插件管理界面确认是否出现 "Watch Video"。
-
-#### 步骤 5：安装依赖
-
-首次使用前需安装 Python 依赖（在系统 Python 中执行，非 Trae 自带的 Python）：
+macOS/Linux 激活虚拟环境：
 
 ```bash
-pip install yt-dlp funasr torch
-# GPU 加速（可选，NVIDIA 显卡用户推荐）
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+source .venv/bin/activate
+# macOS: brew install ffmpeg
+# Linux: 使用系统包管理器安装 ffmpeg
 ```
 
-并确保 `ffmpeg` / `ffprobe` 可用：
+先按 [PyTorch 官方说明](https://pytorch.org/get-started/locally/) 安装与驱动匹配的 `torch` 和 `torchaudio`，再安装项目依赖。当前 Windows 环境验证过以下 CUDA 12.1 组合：
 
 ```bash
-# Windows
-winget install Gyan.FFmpeg
-# macOS
-brew install ffmpeg
+python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+python -m pip install -r requirements.txt
+python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-### 初始化
+没有 NVIDIA CUDA GPU 时，安装对应的 CPU 版本即可。`nvidia-smi` 中的 CUDA 版本表示驱动支持能力；实际使用的 CUDA 运行时取决于 PyTorch 安装包。
 
-首次在 Trae 中调用 `watch` 时，插件会自动运行 `setup.py --json`：
-- 检测 `ffmpeg` / `ffprobe` / `yt-dlp` 是否可用
-- 在 Windows 上自动检测含 FunASR 的系统 Python 路径
-- 创建 `~/.config/watch/.env` 配置文件（权限 0600）
+默认使用系统 Edge，无需额外下载浏览器。使用 Playwright Chromium 时：
 
-如检测到缺失依赖，会输出对应的安装命令提示。
-
-## Windows + Trae 环境说明
-
-Trae IDE 自带的 Python 3.10 缺少 FunASR。本插件通过以下机制解决：
-
-1. `setup.py --json` 自动检测系统中含 FunASR 的 Python 路径（如 Python 3.11）
-2. 路径写入 `~/.config/watch/.env` 的 `WATCH_PYTHON` 变量
-3. AI 从 `setup.py` 返回的 `watch_python` 字段读取路径，后续脚本调用使用该路径代替 `py`
-
-**全程自动，无需手动配置。**
-
-## 使用方法
-
-### 基本用法
-
-```
-watch <视频URL或本地路径> [问题]
+```bash
+python -m playwright install chromium
+# 同时将 WATCH_COOKIE_BROWSER 设为空字符串，使用 Playwright 自带 Chromium。
 ```
 
-### 示例
+## 在 Codex 中安装
 
-```
-# 分析 YouTube 视频
-watch https://youtu.be/abc 这视频讲的是什么语言？
+在安装好依赖的虚拟环境中运行：
 
-# 分析 Bilibili 视频
-watch https://www.bilibili.com/video/BV1xxxxx 总结视频内容
-
-# 分析抖音视频
-watch https://v.douyin.com/xxxxx/
-
-# 分析本地视频，聚焦特定时间段
-watch video.mp4 --start 0:45 --end 1:00
-
-# 仅获取字幕，不抽取帧
-watch $URL --detail transcript
+```bash
+python codex-adapter/install_codex.py
 ```
 
-### 抽帧模式
+安装到 `$CODEX_HOME/skills/watch`，未设置 `CODEX_HOME` 时为 `~/.codex/skills/watch`。重新加载技能后，可以使用 `$watch <视频URL或本地路径>`。
 
-通过 `--detail` 参数控制帧抽取策略：
+安装脚本自动记录所用 Python、FFmpeg 和模型缓存的绝对路径，不依赖开发者机器。FFmpeg 不在 PATH 时可以指定：
 
-| 模式 | 帧数上限 | 行为 |
-|------|----------|------|
-| `transcript` | 0 | 仅字幕，不抽帧（有字幕时跳过视频下载） |
-| `efficient` | ≤50 | 快速关键帧通道 |
-| `balanced` *(默认)* | ≤100 | 场景感知抽帧 |
-| `token-burner` | 无上限 | 场景感知，最高保真度（Token 消耗大） |
-
-也可在 `~/.config/watch/.env` 中设置 `WATCH_DETAIL=balanced`。
-
-### 常用参数
-
-| 参数 | 说明 |
-|------|------|
-| `--detail <mode>` | 抽帧模式 |
-| `--start T` / `--end T` | 聚焦时间段（格式：`SS` / `MM:SS` / `HH:MM:SS`） |
-| `--timestamps T1,T2,…` | 在指定时间点强制抽帧（用于捕捉"看这里"等指示性时刻） |
-| `--max-frames N` | 覆盖模式默认的帧数上限 |
-| `--resolution W` | 帧宽度（默认 512px，需读取屏幕文字时可调到 1024） |
-| `--fps F` | 覆盖自动帧率（上限 2 fps） |
-| `--out-dir DIR` | 显式指定工作目录（默认：自动检测，详见「工作目录自动检测」） |
-| `--no-whisper` | 禁用 FunASR 转写回退（无字幕时仅返回帧） |
-| `--no-dedup` | 保留近似重复帧 |
-
-### 工作目录自动检测
-
-watch.py 会按以下**四级优先级**自动确定工作目录根，所有中间文件（视频、帧、音频、字幕）都会生成在 `<工作目录根>/.watch-work/<时间戳>/` 下，避免散落到 C 盘插件目录或系统临时目录：
-
-| 优先级 | 来源 | 说明 |
-|--------|------|------|
-| 1（最高） | `--out-dir DIR` 参数 | 命令行显式指定，覆盖一切 |
-| 2 | `WATCH_WORK_DIR` 环境变量 / `.env` 配置 | 可选的手动覆盖 |
-| 3 | `SAFE_RM_ALLOWED_PATH` 环境变量 | **自动**：Trae 启动时设置，第一个路径即用户项目根目录（默认行为） |
-| 4（回退） | `Path.cwd()` | 脚本所在目录，最后兜底 |
-
-**Trae 用户无需任何配置**：插件默认读取 Trae 设置的 `SAFE_RM_ALLOWED_PATH` 环境变量，自动识别用户当前打开的项目根目录，把工作文件放在 `<项目根>/.watch-work/<时间戳>/` 下。这是推荐用法，无需在 `.env` 中设置 `WATCH_WORK_DIR`。
-
-**特殊情况下的手动覆盖**：仅在以下场景才需要设置 `WATCH_WORK_DIR`：
-- 不在 Trae 环境中运行（`SAFE_RM_ALLOWED_PATH` 不存在，自动检测失效）
-- 想把工作文件统一放到其他磁盘位置
-
-在 `~/.config/watch/.env` 中设置：
-
-```ini
-WATCH_WORK_DIR=D:\my-project
+```powershell
+python codex-adapter/install_codex.py --ffmpeg 'C:\tools\ffmpeg\bin\ffmpeg.exe'
 ```
 
-工作目录创建后会在 stderr 输出 `[watch] working dir: <路径>`，方便定位。
+其他选项：
 
-## 配置
+- `--python <路径>`：指定已安装依赖的 Python；默认当前解释器。
+- `--model-cache <目录>`：指定模型缓存位置。
+- `--model-dir <目录>` / `--vad-model-dir <目录>`：复用含 `model.pt` 的本地模型目录。
+- `--dest <目录>`：自定义技能安装目录。
+- `--force`：更新已有安装，保留全局用户偏好和模型缓存。
 
-配置文件位于 `~/.config/watch/.env`（权限 0600）：
+SenseVoice 的分词器在部分 Windows 环境中不能读取含中文的模型路径；可将模型放到 ASCII 路径，或创建 ASCII 路径的目录联接后传给 `--model-dir`。
 
-```ini
-# 抽帧模式
-WATCH_DETAIL=balanced
+## 在 Trae 中安装
 
-# FunASR 转写设备（auto/cuda/cpu）
+将仓库复制到 Trae 的插件目录（如 Windows 的 `~/.trae-cn/plugins/funasr-watch/`），确保 `.trae-plugin/plugin.json` 和 `skills/` 保持相对结构，重启后使用 `watch` 技能。Python 依赖安装在系统 Python 或独立虚拟环境中；`setup.py` 会检测并记录 `WATCH_PYTHON`，绕过缺少依赖的 Trae 内置 Python。
+
+## 命令行使用
+
+```bash
+python skills/watch/scripts/setup.py --json
+python skills/watch/scripts/watch.py "<视频URL或本地路径>"
+python skills/watch/scripts/watch.py video.mp4 --start 0:45 --end 1:00
+python skills/watch/scripts/watch.py "<视频URL>" --detail transcript
+```
+
+已安装的 Codex 技能也可通过其 `scripts/codex_watch.py` 入口运行，它会设置所需解释器、FFmpeg 和模型路径。
+
+| 参数 | 作用 |
+|---|---|
+| `--detail transcript` | 仅字幕/转写；有原生字幕时可跳过视频下载 |
+| `--detail efficient` | 快速关键帧抽取，最多 50 帧 |
+| `--detail balanced` | 默认场景感知抽帧，最多 100 帧 |
+| `--detail token-burner` | 不设帧数上限 |
+| `--start T --end T` | 分析指定时间段，支持秒、MM:SS、HH:MM:SS |
+| `--timestamps 0:45,2:10` | 在指定时间点抽帧 |
+| `--max-frames N --resolution W` | 调整帧数上限和图像宽度 |
+| `--fps F` | 指定采样帧率，最高 2 fps |
+| `--out-dir DIR` | 指定产物目录 |
+| `--no-whisper` | 禁用本地 FunASR 转写回退，保留兼容参数名 |
+| `--no-dedup` | 保留相似帧 |
+
+工作目录优先级：`--out-dir` > `WATCH_WORK_DIR` > Trae 的 `SAFE_RM_ALLOWED_PATH` > 当前目录。默认在工作区的 `.watch-work/<时间戳>/` 保存视频、音频、帧和转写。
+
+## 默认 CPU/GPU 混合分工
+
+配置文件为 `~/.config/watch/.env`：
+
+```dotenv
+# ASR: auto 优先 CUDA；cuda/cuda:0 指定 GPU；cpu 指定 CPU
 WATCH_TRANSCRIBE_DEVICE=auto
-
-# 含 FunASR 的系统 Python 路径（Windows 自动检测）
-WATCH_PYTHON=C:\Users\<user>\AppData\Local\Programs\Python\Python311\python.exe
-
-# Cookie 文件路径（用于下载登录/会员视频）
-WATCH_COOKIE_FILE=C:\Users\<user>\.config\watch\cookies.txt
-
-# 工作目录根（可选，通常无需设置）
-# 留空 = 自动检测 Trae 用户项目根目录（推荐）
-# 仅需覆盖自动检测时才设置，如 WATCH_WORK_DIR=D:\my-project
-# WATCH_WORK_DIR=
-
-# 安装完成标记
-SETUP_COMPLETE=true
+# VAD: 默认 CPU；auto 跟随 ASR，也可显式指定 cuda/cpu
+WATCH_VAD_DEVICE=cpu
+WATCH_DETAIL=balanced
 ```
 
-### Cookie 配置（可选）
+| 方案 | ASR 配置 | VAD 配置 | 本机推理实测 |
+|---|---|---|---:|
+| 纯 CPU | `cpu` | `cpu` | 38.55 秒 |
+| 识别和分段都使用 GPU | `auto` | `auto` | 32.75 秒 |
+| **默认混合分工** | **`auto`** | **`cpu`** | **30.86 秒** |
 
-如需下载 Bilibili 会员视频或抖音私密视频，可导出 Cookie：
+测试硬件为 Intel i7-11800H + RTX 3050 Laptop 4GB；使用 FunASR 1.4.16、PyTorch 2.5.1+cu121、相同的 621.32 秒音频，预热后每个方案测一次。耗时不含下载、解码、模型加载及抽帧；混合方案在该样本中约快 6%，其他硬件和音频可能不同。详见 [测试条件与结果](benchmarks/device-comparison.json)。
 
-1. 安装浏览器插件 [J2Team Cookies](https://junookyo.gitbook.io/j2team-cookies)
-2. 导出 Netscape 格式的 `cookies.txt` 到 `~/.config/watch/cookies.txt`
-3. 插件会根据 URL 域名自动选择对应的 Cookie 源
+GPU 模型加载失败时会尝试 CPU 回退。原生字幕可用时仍优先使用字幕，无需运行识别模型。SenseVoiceSmall 当前权重约 0.9GB，首次运行需要下载模型。
 
-## 项目结构
+## 抖音自动 Cookie
 
-```
-watch/0.3.0/
-├── .trae-plugin/
-│   └── plugin.json              # Trae 插件清单
-├── assets/
-│   └── watch-small.svg          # 插件图标
-├── skills/
-│   └── watch/
-│       ├── SKILL.md             # 技能契约文档
-│       └── scripts/
-│           ├── watch.py         # 主入口（工作目录自动检测）
-│           ├── setup.py         # 环境检测与初始化
-│           ├── download.py      # yt-dlp 下载封装
-│           ├── frames.py        # ffmpeg 抽帧
-│           ├── transcribe.py    # 字幕解析（VTT/SRT）
-│           ├── funasr_transcribe.py  # FunASR 本地转写
-│           ├── whisper.py       # FunASR 薄封装（向后兼容）
-│           ├── ffmpeg_utils.py  # ffmpeg 路径解析
-│           ├── config.py        # .env 读取 + Trae 工作区检测
-│           └── build-skill.sh   # 构建脚本
-└── README.md                    # 本文档
+默认使用独立的本地 Edge 配置访问目标页面，获取 Cookie 并保存在 `~/.config/watch/auto-cookies/`。缓存默认有效六小时，会话被拒绝后刷新一次。如果 yt-dlp 的详情接口仍失败，使用浏览器正常加载页面得到的媒体地址下载。
+
+```dotenv
+WATCH_AUTO_COOKIES=true
+WATCH_COOKIE_BROWSER=msedge
+WATCH_COOKIE_MAX_AGE=21600
 ```
 
-## 与上游的主要差异
+设置 `WATCH_AUTO_COOKIES=false` 可关闭该功能。设置 `WATCH_COOKIE_BROWSER=chrome` 使用系统 Chrome；空字符串选择 Playwright Chromium。
 
-本插件基于 [bradautomates/claude-video](https://github.com/bradautomates/claude-video) v0.2.0 改造，主要变更：
+Cookie 缓存限制为当前用户访问（Windows 还允许 SYSTEM），日志不输出 Cookie 值。日常浏览器配置只会在显式设置 `WATCH_BROWSER` 后读取。显式 `WATCH_COOKIE_FILE`（Netscape cookies.txt）优先，其次为 `WATCH_BROWSER`，最后为抖音自动 Cookie。
 
-### Whisper API → FunASR 本地转写
+手动刷新或让用户完成网站要求的登录/验证：
 
-| 维度 | 原版（Whisper API） | 本插件（FunASR） |
-|------|---------------------|------------------|
-| API Key | 需要（Groq/OpenAI） | 不需要 |
-| 网络依赖 | 必须联网 | 首次下载模型后离线 |
-| 隐私 | 音频上传到云端 | 完全本地 |
-| 中文识别 | 一般 | 优秀（CER 7.81%） |
-| 成本 | 按 API 调用计费 | 免费 |
+```bash
+python skills/watch/scripts/auto_cookies.py "<抖音视频URL>" --refresh
+python skills/watch/scripts/auto_cookies.py "<抖音视频URL>" --interactive --timeout 180
+```
 
-### 其他增强
+Codex 入口的对应命令为 `codex_watch.py --cookies --refresh <URL>` 或 `codex_watch.py --cookies --interactive --timeout 180 <URL>`。验证码由用户完成；浏览器会话不能保证获取登录受限、地域受限或无权访问的视频。
 
-- **`plugin.json`** — Trae 清单格式，包含 `interface`（displayName、capabilities、brandColor `#E11D48`、icon）
-- **`SKILL.md`** — 适配 Trae 的 `RunCommand` 工具，Windows 用 `py` 启动器，添加 `WATCH_PYTHON` 环境检测说明
-- **`setup.py`** — 新增 `_find_python_with_funasr()` 等函数，自动检测含 FunASR 的系统 Python（绕过 Trae 自带的 Python 3.10），使用 `importlib.util.find_spec` 快速检测
-- **`funasr_transcribe.py`** — 新模块，实现 FunASR + SenseVoiceSmall 本地转写，支持 GPU/CPU 自动切换、VAD 分段、时间戳输出、标签过滤
-- **`whisper.py`** — 简化为薄封装，委托给 `funasr_transcribe.transcribe_video()`
-- **`watch.py`** — 新增 `transcript.txt` 保存功能；新增**工作目录自动检测**（四级优先级：`--out-dir` > `WATCH_WORK_DIR` > `SAFE_RM_ALLOWED_PATH` 自动检测 Trae 工作区 > `Path.cwd()`），工作文件自动生成在用户项目根目录的 `.watch-work/<时间戳>/` 下，不再散落到 C 盘插件目录
-- **`config.py`** — 新增 `detect_trae_workspace()` 函数，读取 Trae 启动时设置的 `SAFE_RM_ALLOWED_PATH` 环境变量自动定位用户项目根目录
-- **`ffmpeg_utils.py`** — 新模块，解析 Windows 上完整版 ffmpeg 路径（绕过 Trae 自带的精简版）
-- **`download.py`** — 支持 SRT 字幕，基于 URL 域名动态选择 Cookie 源
-- **`transcribe.py`** — 支持 SRT 格式解析
+Bilibili 等其他平台可配置 `WATCH_COOKIE_FILE` 或 `WATCH_BROWSER`，使用具有相应访问权限的会话。
+
+## 开发与验证
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q skills/watch/scripts codex-adapter
+python -m pip check
+```
+
+单元测试使用模拟浏览器会话和虚构 Cookie，不会访问个人浏览器或联网下载视频。已另行验证抖音下载、CPU VAD + CUDA ASR 的完整本地视频转写，以及 Codex 安装入口。
+
+目录结构：
+
+```text
+.trae-plugin/               Trae 插件清单
+skills/watch/              通用技能及视频处理脚本
+codex-adapter/              Codex 技能模板、安装脚本和启动器
+benchmarks/                性能测试条件与结果
+tests/                     Cookie 和设备选择回归测试
+requirements.txt           Python 依赖
+```
 
 ## 故障排查
 
-### 常见问题
+| 问题 | 处理方法 |
+|---|---|
+| `ffmpeg not found` | 安装完整 FFmpeg，并加入 PATH 或通过安装参数指定 |
+| GPU 未启用 | 检查 `torch.cuda.is_available()`，安装与驱动匹配的 torch/torchaudio |
+| 无法启动 Cookie 浏览器 | 安装 Edge，或配置其他浏览器及 Playwright Chromium |
+| 网站要求登录/验证码 | 使用 `--interactive`，由用户完成后重试 |
+| SenseVoice 分词器加载失败 | 检查 Windows 模型路径，优先使用 ASCII 路径 |
+| 转写没有逐句时间戳 | 当前模型可能返回整段文本，转写文件中的时间精度取决于模型输出 |
 
-| 问题 | 解决方案 |
-|------|----------|
-| `ffmpeg not found` | 运行 `winget install Gyan.FFmpeg`（Windows）或 `brew install ffmpeg`（macOS） |
-| `yt-dlp not found` | 运行 `pip install yt-dlp` |
-| `No module named 'funasr'` | 在系统 Python 中运行 `pip install funasr torch` |
-| 字幕为空 | 检查视频是否有音轨；会员视频需配置 Cookie |
-| 下载失败 | yt-dlp 版本过旧，运行 `pip install -U yt-dlp` |
-| GPU 未启用 | 安装 CUDA 版 PyTorch：`pip install torch --index-url https://download.pytorch.org/whl/cu121` |
+## 许可证与致谢
 
-### 日志位置
-
-- 工作目录：`<用户项目根>/.watch-work/<时间戳>/`（自动检测，包含 video.mp4、frames/、audio.wav、transcript.txt）。也可通过 `WATCH_WORK_DIR` 或 `--out-dir` 显式指定。
-- 配置文件：`~/.config/watch/.env`
-
-## 技术栈
-
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — 视频下载
-- **[ffmpeg](https://ffmpeg.org/)** — 音视频处理
-- **[FunASR](https://github.com/modelscope/FunASR)** — 语音识别框架
-- **[SenseVoiceSmall](https://www.modelscope.cn/models/iic/SenseVoiceSmall)** — 多语言语音识别模型
-- **[PyTorch](https://pytorch.org/)** — 深度学习框架（GPU 加速）
-
-## 许可证
-
-MIT License — 详见 [上游 LICENSE](https://github.com/bradautomates/claude-video/blob/main/LICENSE)
-
-## 致谢
+MIT License，沿用 [上游许可证](https://github.com/bradautomates/claude-video/blob/main/LICENSE)。
 
 - 原项目：[bradautomates/claude-video](https://github.com/bradautomates/claude-video)
-- FunASR 团队：[modelscope/FunASR](https://github.com/modelscope/FunASR)
-- SenseVoice 模型：阿里达摩院 DAMO Academy
-
-## Star History
-
-如果这个项目对你有帮助，欢迎 Star ⭐
+- 语音识别：[modelscope/FunASR](https://github.com/modelscope/FunASR)
+- 模型：[SenseVoiceSmall](https://www.modelscope.cn/models/iic/SenseVoiceSmall)

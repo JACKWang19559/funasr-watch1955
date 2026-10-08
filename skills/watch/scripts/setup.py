@@ -41,7 +41,7 @@ CONFIG_FILE = CONFIG_DIR / ".env"
 ENV_TEMPLATE = """# /watch 配置文件
 #
 # 本地转写使用 FunASR + SenseVoiceSmall（阿里达摩院开源模型）
-# 无需 API key，完全离线运行（首次运行需下载模型约 234MB）
+# 无需 API key，完全离线运行（首次运行需下载模型约 0.9GB）
 #
 # 安装依赖：
 #   pip install funasr torch
@@ -53,6 +53,9 @@ ENV_TEMPLATE = """# /watch 配置文件
 # cuda  - 强制用 GPU
 # cpu   - 强制用 CPU
 WATCH_TRANSCRIBE_DEVICE=auto
+
+# 默认 CPU 分段 + GPU 识别；auto 跟随识别设备，也可设为 cuda/cpu
+WATCH_VAD_DEVICE=cpu
 
 # 系统 Python 解释器路径（含 FunASR 的 Python）
 # Trae 自带的 Python 3.10 缺少 FunASR，这里记录系统 Python 路径，
