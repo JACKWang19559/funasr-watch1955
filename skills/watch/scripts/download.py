@@ -268,8 +268,14 @@ def download_url(
     result = _run_ytdlp(cmd, url)
     video = _pick_video(out_dir)
     if video is None:
+        host = (urlparse(url).hostname or "").lower()
+        hint = ""
+        if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}:
+            hint = (". For a playable YouTube video, retry with --via-browser; "
+                    "if login is required, use codex_watch.py --browser-login <URL> "
+                    "and close that dedicated window before retrying")
         raise SystemExit(
-            f"yt-dlp did not produce a video file in {out_dir} (exit {result.returncode})"
+            f"yt-dlp did not produce a video file in {out_dir} (exit {result.returncode}){hint}"
         )
 
     subtitle = _pick_subtitle(out_dir)

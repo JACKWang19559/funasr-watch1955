@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import wave
 
 # 优先使用完整版 ffmpeg（绕过 Trae 自带的精简版）
 from ffmpeg_utils import find_ffmpeg, find_ffprobe
@@ -251,20 +252,44 @@ def transcribe_video(
     # 加载模型（首次运行会下载）
     model = _get_model()
 
-    # 执行转写
-    try:
-        result = model.generate(
-            input=str(audio_path),
-            # 启用时间戳输出
-            use_timestamp=True,
-            # 批量大小（GPU 可设大些，CPU 设小些）
-            batch_size_s=300,
-        )
-    except Exception as exc:
-        raise SystemExit(f"FunASR transcription failed: {exc}")
-
-    # 解析结果
-    segments = _parse_segments(result)
+    # SenseVoice can return text without sentence_info even with use_timestamp.
+    # Recognize bounded source windows so that this case has honest time ranges
+    # instead of assigning the entire video to [00:00]. Load the model only once.
+    segments = []
+    with wave.open(str(audio_path), "rb") as audio:
+        rate = audio.getframerate()
+        total = audio.getnframes()
+        window_frames = rate * 60
+        chunk_dir = audio_out.parent / "asr-chunks"
+        if total > window_frames:
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+        for index, start in enumerate(range(0, total, window_frames)):
+            count = min(window_frames, total - start)
+            if total <= window_frames:
+                chunk = audio_path
+            else:
+                chunk = chunk_dir / f"chunk-{index:04d}.wav"
+                audio.setpos(start)
+                with wave.open(str(chunk), "wb") as output:
+                    output.setparams(audio.getparams())
+                    output.writeframes(audio.readframes(count))
+            try:
+                result = model.generate(input=str(chunk), use_timestamp=True,
+                                        batch_size_s=300, disable_pbar=True)
+            except Exception as exc:
+                raise SystemExit(f"FunASR transcription failed in chunk {index}: {exc}")
+            parsed = _parse_segments(result)
+            offset, end = start / rate, (start + count) / rate
+            if parsed and all(segment["end"] == 0 for segment in parsed):
+                segments.append({"start": round(offset, 2), "end": round(end, 2),
+                                 "text": " ".join(segment["text"] for segment in parsed),
+                                 "timestamp_kind": "window"})
+            else:
+                for segment in parsed:
+                    segment["start"] = round(offset + segment["start"], 2)
+                    segment["end"] = round(min(end, offset + segment["end"]), 2)
+                    segments.append(segment)
+            print(f"[watch] transcribed audio through {end:.1f}s", file=sys.stderr)
 
     if not segments:
         raise SystemExit("FunASR returned no transcript segments")

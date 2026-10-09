@@ -22,7 +22,7 @@ def main() -> int:
     if runtime.get("ffmpeg"):
         ffmpeg = Path(runtime["ffmpeg"])
         env["FFMPEG_PATH"] = str(ffmpeg)
-        env["FFPROBE_PATH"] = str(ffmpeg.with_name("ffprobe.exe"))
+        env["FFPROBE_PATH"] = str(ffmpeg.with_name("ffprobe.exe" if ffmpeg.suffix.lower() == ".exe" else "ffprobe"))
         env["PATH"] = str(ffmpeg.parent) + os.pathsep + env["PATH"]
     env["WATCH_PYTHON"] = str(python)
     env["PYTHONUTF8"] = "1"
@@ -40,6 +40,10 @@ def main() -> int:
     elif args and args[0] == "--cookies":
         target = "auto_cookies.py"
         args = args[1:]
+    elif args and args[0] in {"--browser-login", "--browser-capture"}:
+        mode = "login" if args[0] == "--browser-login" else "capture"
+        target = "youtube_browser.py"
+        args = [mode, *args[1:]]
     return subprocess.call([str(python), "-u", str(scripts / target), *args], env=env)
 
 

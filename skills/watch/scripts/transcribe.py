@@ -103,6 +103,9 @@ def format_transcript(segments: list[dict]) -> str:
     for seg in segments:
         start = int(seg["start"])
         stamp = f"[{start // 60:02d}:{start % 60:02d}]"
+        if seg.get("timestamp_kind") == "window":
+            end = int(seg["end"])
+            stamp = f"[{start // 60:02d}:{start % 60:02d}–{end // 60:02d}:{end % 60:02d}]"
         lines.append(f"{stamp} {seg['text']}")
     return "\n".join(lines)
 

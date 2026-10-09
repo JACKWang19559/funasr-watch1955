@@ -44,6 +44,20 @@ actual question with relevant timestamps. State when sparse frames limit visual
 coverage or transcription is unavailable. Keep working files for follow-ups and
 reuse them instead of downloading again.
 
+For YouTube bot/login errors, locked/encrypted cookies, unavailable challenge
+solvers, or captions that return an empty body, read
+[references/youtube-browser.md](references/youtube-browser.md). It provides
+dedicated manual login and `--via-browser` capture without exporting cookies or
+running downloaded JS components. Switch to this fallback after a failed
+authenticated downloader attempt rather than repeating client/API variations.
+
+Ground names and counts in the spoken content and readable frames. A thumbnail
+logo is a clue, not proof of an app's identity. Separate the creator's historical
+opinions from current product facts. Use actual player/frame timestamps;
+description chapters can be outdated after edits. ASR chunk ranges bound the
+speech and are not exact sentence timestamps. Do not cite an entire transcript
+at `[00:00]` as if it had precise timing.
+
 Douyin selected-page links with `modal_id` are normalized automatically. Cookies
 are acquired in a separate local browser profile, cached for six hours, and
 refreshed once if rejected. If the detail API still rejects the session, the
@@ -56,5 +70,6 @@ When the site requires login or verification, use
 separate profile. Do not automate a verification challenge.
 
 `WATCH_AUTO_COOKIES=false` disables automatic acquisition. Explicit
-`WATCH_COOKIE_FILE` or `WATCH_BROWSER` settings take precedence. Other sites
-use their existing downloader authentication settings.
+`WATCH_COOKIE_FILE` or `WATCH_BROWSER` settings take precedence. The `--cookies`
+commands above are Douyin-specific. Other sites use downloader authentication;
+YouTube additionally supports the browser workflow linked above.
