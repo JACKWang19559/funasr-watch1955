@@ -28,6 +28,11 @@ def main() -> int:
         description="Download a video, extract auto-scaled frames, and surface the transcript.",
     )
     ap.add_argument("source", help="Video URL or local file path")
+    ap.add_argument("--via-browser", action="store_true",
+                    help="YouTube fallback: capture original audio and sampled frames in a dedicated browser")
+    ap.add_argument("--browser-profile", help="Dedicated profile used by --browser-login; never the personal browser profile")
+    ap.add_argument("--browser-rate", type=float, default=4,
+                    help="Continuous browser playback rate, 1 to 4 (original audio speed is preserved)")
     ap.add_argument("--max-frames", type=int, default=None, help="Override frame cap")
     ap.add_argument("--resolution", type=int, default=512, help="Frame width in pixels (default 512)")
     ap.add_argument("--fps", type=float, default=None, help="Override auto-fps")
@@ -75,11 +80,15 @@ def main() -> int:
     if args.max_frames is not None:
         max_frames = args.max_frames
     else:
-        max_frames = configured_cap
+        max_frames = 16 if args.via_browser else configured_cap
     if max_frames is not None and max_frames < 1:
         raise SystemExit("--max-frames must be greater than zero")
     budget_cap = max_frames if max_frames is not None else 100
     cue_timestamps = parse_timestamps(args.timestamps)
+    if args.via_browser and cue_timestamps:
+        raise SystemExit("--via-browser samples actual playback frames; exact --timestamps requires a downloaded video")
+    if args.browser_profile and not args.via_browser:
+        raise SystemExit("--browser-profile requires --via-browser")
 
     if args.out_dir:
         work = Path(args.out_dir).expanduser().resolve()
@@ -109,7 +118,16 @@ def main() -> int:
     transcript_source: str | None = None
     video_path: str | None = None
 
-    if url_source:
+    if args.via_browser:
+        from youtube_browser import BrowserCaptureError, capture
+        try:
+            dl = capture(args.source, work / "browser", profile=args.browser_profile,
+                         rate=args.browser_rate, max_frames=0 if detail == "transcript" else max_frames,
+                         resolution=args.resolution)
+        except BrowserCaptureError as exc:
+            raise SystemExit(f"Browser capture failed: {exc}") from None
+        video_path = dl["video_path"]
+    elif url_source:
         print("[watch] checking metadata/captions via yt-dlp…", file=sys.stderr)
         dl = fetch_captions(args.source, work / "download")
         if dl.get("subtitle_path"):
@@ -124,7 +142,9 @@ def main() -> int:
     # --timestamps needs the video for frame grabs, so it overrides the
     # transcript-mode download skip (and forces a full, not audio-only, fetch).
     audio_only = detail == "transcript" and not cue_timestamps
-    if detail == "transcript" and transcript_segments and not cue_timestamps:
+    if args.via_browser:
+        pass  # The verified original audio is already available.
+    elif detail == "transcript" and transcript_segments and not cue_timestamps:
         video_path = None
     else:
         if url_source:
@@ -187,6 +207,12 @@ def main() -> int:
     frame_meta: dict = {"engine": "none", "candidate_count": 0, "selected_count": 0, "fallback": False}
     cue_frames: list[dict] = []
     cue_meta: dict = {}
+    if args.via_browser:
+        captured_frames = dl.get("browser_frames", [])
+        frames = [frame for frame in captured_frames
+                  if effective_start <= frame["timestamp_seconds"] <= effective_end]
+        frame_meta = {"engine": "browser-continuous-sample", "candidate_count": len(captured_frames),
+                      "selected_count": len(frames), "fallback": False}
 
     # Transcript cues are pinned: extracted first and counted against the cap so
     # the detail engine never evicts the moments the user explicitly asked for.
@@ -208,7 +234,7 @@ def main() -> int:
             )
 
     detail_budget = max_frames if max_frames is None else max(0, max_frames - len(cue_frames))
-    if detail != "transcript" and video_path and detail_budget != 0:
+    if not args.via_browser and detail != "transcript" and video_path and detail_budget != 0:
         cap_label = "unlimited" if detail_budget is None else str(detail_budget)
         engine_label = "keyframes" if detail == "efficient" else "scene-aware frames"
         print(
@@ -259,7 +285,7 @@ def main() -> int:
             )
             transcript_segments = filter_range(all_segments, start_sec, end_sec) if focused else all_segments
             transcript_text = format_transcript(transcript_segments)
-            transcript_source = f"whisper ({used_backend})"
+            transcript_source = used_backend
         except SystemExit as exc:
             print(f"[watch] transcription fallback failed: {exc}", file=sys.stderr)
     elif not transcript_segments and video_path and not meta.get("has_audio"):
@@ -285,6 +311,8 @@ def main() -> int:
         print(f"- **Resolution:** {meta['width']}x{meta['height']} ({meta.get('codec') or 'unknown codec'})")
     range_mode = "focused" if focused else "full"
     print(f"- **Detail:** {detail}")
+    if args.via_browser:
+        print("- **Media:** verified original browser audio; playback acceleration does not change audio timestamps")
     detail_count = frame_meta.get("selected_count", 0)
     if detail != "transcript":
         cap_label = "unlimited" if detail_budget is None else str(detail_budget)
@@ -313,6 +341,10 @@ def main() -> int:
             f"- **Transcript:** {len(transcript_segments)} segments{in_range} "
             f"(via {transcript_source or 'captions'})"
         )
+        if any(segment.get("timestamp_kind") == "window" for segment in transcript_segments):
+            print("- **ASR timestamps:** chunk ranges, not exact sentence or word times")
+            if focused:
+                print("- **ASR focus:** overlapping chunks can include context outside the requested range")
     else:
         print("- **Transcript:** none available")
 
@@ -337,7 +369,7 @@ def main() -> int:
     print("## Frames")
     print()
     if frames:
-        print(f"Frames live at: `{work / 'frames'}`")
+        print(f"Frames live at: `{work / ('browser' if args.via_browser else 'frames')}`")
         print()
         print(
             "**Read each frame path below with the Read tool to view the image.** "
@@ -368,6 +400,9 @@ def main() -> int:
         # 保存字幕到工作目录，方便后续查看和复用
         transcript_file = work / "transcript.txt"
         transcript_file.write_text(transcript_text, encoding="utf-8")
+        import json
+        (work / "transcript.json").write_text(
+            json.dumps(transcript_segments, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\n_Transcript saved to: `{transcript_file}`_")
     elif detail == "transcript":
         print(

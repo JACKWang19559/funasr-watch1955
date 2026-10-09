@@ -17,6 +17,14 @@ with `modal_id` are normalized. Manual login or verification, when required,
 uses `scripts/auto_cookies.py <URL> --interactive --timeout 180`. Do not print
 cookie values or automate verification challenges.
 
+For YouTube bot/login errors, locked browser cookies, missing challenge solvers,
+or empty caption responses, read [references/youtube-browser.md](references/youtube-browser.md).
+It provides dedicated manual login and continuous browser capture via
+`--via-browser`. After a failed authenticated downloader attempt, switch to this
+workflow instead of repeating client/API variations. Browser capture defaults
+to 16 actual playback frames and preserves original audio speed at up to 4×
+playback; exact `--timestamps` cues require a downloaded video.
+
 ## Scripts location
 
 All scripts live under `./scripts/` (sibling of this SKILL.md). On **Windows**, use `py` to run Python scripts; on macOS/Linux use `python3`. Examples below use `py` (Windows default).
@@ -159,6 +167,8 @@ Optional flags:
 - `--out-dir DIR` — explicitly set working directory for all intermediate files (overrides auto-detection). 默认自动检测：`<WATCH_WORK_DIR 或 Trae 工作区>/.watch-work/<timestamp>`。
 - `--no-whisper` — disable the FunASR transcription fallback entirely (frames-only if no captions)
 - `--no-dedup` — keep near-duplicate frames. By default a frame-delta pass drops frames that are visually near-identical to the previous kept one.
+- `--via-browser` — use YouTube continuous browser capture when the normal downloader fails.
+- `--browser-profile DIR` / `--browser-rate 1..4` — select the dedicated profile and browser playback rate.
 
 ### Focusing on a section (higher frame rate)
 
@@ -188,13 +198,21 @@ py ./scripts/watch.py "$URL" --start 1:12:00
 
 **Step 4 — answer the user.** You now have two streams of evidence:
 - **Frames** — what's on screen at each timestamp
-- **Transcript** — what's said at each timestamp. The report's header shows the source (`captions` = yt-dlp pulled native subs; `whisper (funasr)` = transcribed locally by FunASR).
+- **Transcript** — what's said at each timestamp. The report's header shows the source (`captions` = native subs; `funasr` = local ASR). When native sentence timing is unavailable, 60-second source windows are labeled `[MM:SS–MM:SS]`; these are chunk ranges, not exact sentence or word timestamps.
 
 If the user asked a specific question, answer it directly citing timestamps. If they didn't ask anything, summarize what happens in the video — structure, key moments, notable visuals, spoken content.
 
 This holds for `transcript` detail too: even with no frames, produce a **summary** like the other modes — do not paste the full transcript into chat. Synthesize structure, key moments, and spoken content with timestamps; quote only the lines that matter. Offer the raw transcript only if the user explicitly asks for it.
 
-**Step 5 — clean up.** The script prints a working directory at the end. If the user isn't going to ask follow-ups about this video, delete it. If they might, leave it in place.
+Ground names and counts in speech and readable frames. A thumbnail logo alone
+does not establish an app's identity. Separate the creator's historical opinions
+from current product facts. Use actual player/frame times; description chapters
+may be stale after edits. Do not present chunk timestamps as precise sentence times.
+
+**Step 5 — retain reusable files.** Keep the working directory for follow-ups.
+Reuse verified media, frames and transcripts rather than downloading again.
+Remove retained files only when the user requests cleanup or they are known to
+be unnecessary.
 
 ## Detail and frames
 

@@ -50,6 +50,9 @@ def main() -> int:
         shutil.copy2(source, scripts / source.name)
     shutil.copy2(adapter / "codex_watch.py", scripts / "codex_watch.py")
     shutil.copy2(adapter / "SKILL.md", target / "SKILL.md")
+    references = root / "skills" / "watch" / "references"
+    if references.is_dir():
+        shutil.copytree(references, target / "references", dirs_exist_ok=True)
     (scripts / "runtime.json").write_text(json.dumps(runtime, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Installed watch skill: {target}")
     print("Default placement: ASR=auto, VAD=cpu (existing preferences are preserved)")

@@ -11,8 +11,10 @@
 - 默认采用 **CPU 语音分段 + GPU 语音识别**；CUDA 不可用时使用 CPU。
 - 抖音自动获取 Cookie、缓存和失效刷新，支持精选页 `modal_id` 链接。
 - 独立浏览器会话解析公开视频媒体地址，处理 yt-dlp 详情接口仍返回 403 的情况。
+- YouTube 下载失败时可用独立浏览器连续播放提取原始音轨，并验证是否完整。
 - 提供 Codex 安装脚本；保留 Trae 插件入口和直接命令行使用。
-- 生成画面、时间点及 `transcript.txt`，后续分析可复用已有文件。
+- 生成画面、时间点、`transcript.txt` 和结构化 `transcript.json`，后续分析可复用已有文件。
+- 模型未提供逐句时间戳时，以 60 秒源音频区间标注转写范围。
 
 ## 安装依赖
 
@@ -112,6 +114,9 @@ python skills/watch/scripts/watch.py "<视频URL>" --detail transcript
 | `--out-dir DIR` | 指定产物目录 |
 | `--no-whisper` | 禁用本地 FunASR 转写回退，保留兼容参数名 |
 | `--no-dedup` | 保留相似帧 |
+| `--via-browser` | YouTube 浏览器回退，连续播放提取音轨和采样帧 |
+| `--browser-profile DIR` | 指定已登录的独立浏览器配置目录 |
+| `--browser-rate 1..4` | 浏览器播放倍速，保存的音轨仍为原始速度 |
 
 工作目录优先级：`--out-dir` > `WATCH_WORK_DIR` > Trae 的 `SAFE_RM_ALLOWED_PATH` > 当前目录。默认在工作区的 `.watch-work/<时间戳>/` 保存视频、音频、帧和转写。
 
@@ -162,6 +167,47 @@ Codex 入口的对应命令为 `codex_watch.py --cookies --refresh <URL>` 或 `c
 
 Bilibili 等其他平台可配置 `WATCH_COOKIE_FILE` 或 `WATCH_BROWSER`，使用具有相应访问权限的会话。
 
+## YouTube 浏览器回退
+
+主下载器继续使用 [yt-dlp](https://github.com/yt-dlp/yt-dlp)，它是 youtube-dl 的衍生项目。
+下载遇到机器人验证、Cookie 数据库锁定、签名挑战，或字幕响应为空时，可以切换到浏览器回退。
+此方式使用现有 Playwright、已安装的 Edge/Chrome 和 FFmpeg，不自动下载执行额外的 JS 求解组件。
+
+先打开独立浏览器，由用户手动登录、播放目标视频，再关闭该独立窗口：
+
+```bash
+python skills/watch/scripts/youtube_browser.py login "<YouTube URL>"
+```
+
+随后连续播放并分析：
+
+```bash
+python skills/watch/scripts/watch.py "<YouTube URL>" --via-browser --out-dir .watch-work/youtube-example
+```
+
+默认复用 `~/.config/watch/browser-profiles/youtube`。也可用 `WATCH_YOUTUBE_PROFILE`
+配置独立目录，或分别在登录命令使用 `--profile DIR`、分析命令使用 `--browser-profile DIR`。
+Cookie 留在本地配置中，不导出到报告。不要提交浏览器配置、Cookie 或登录数据。
+
+Codex 安装入口支持 `codex_watch.py --browser-login <URL>`、
+`codex_watch.py <URL> --via-browser` 和仅提取媒体的 `codex_watch.py --browser-capture <URL>`。
+
+回退流程在最多 4× 连续播放时复制原始音频缓冲数据，检查缓冲区是否覆盖全片，再解码比较实际音频时长；
+文件头显示的时长不能单独证明提取完整。`capture.json` 只对通过两项检查的结果标记 `complete: true`，
+同一输出目录可复用经哈希检查的媒体。帧默认采样最多 16 张，记录实际画面时间，并跳过结束页。
+
+`--detail transcript` 可跳过帧图。`--start/--end` 筛选报告，仍需连续播放完整视频。
+精确的 `--timestamps` 抽帧需要下载到本地的视频，不支持浏览器回退模式。
+验证码由用户完成；直播、加密媒体、广告或播放失败可能使此回退不可用。
+完整流程和限制见 [YouTube 浏览器参考](skills/watch/references/youtube-browser.md)。
+
+## 转写时间范围
+
+FunASR 按最多 60 秒的源音频区间转写，并复用同一个模型实例。
+模型有逐句时间戳时保留它们；没有时输出 `[01:00–02:00]` 这样的区间，并在 `transcript.json`
+标记 `timestamp_kind: window`。区间能定位段落，不能当成精确的句子或单词时间。
+筛选某个时间段时，重叠的区间可能包含范围外的上下文。
+
 ## 开发与验证
 
 ```bash
@@ -170,7 +216,8 @@ python -m compileall -q skills/watch/scripts codex-adapter
 python -m pip check
 ```
 
-单元测试使用模拟浏览器会话和虚构 Cookie，不会访问个人浏览器或联网下载视频。已另行验证抖音下载、CPU VAD + CUDA ASR 的完整本地视频转写，以及 Codex 安装入口。
+单元测试使用模拟浏览器会话、虚构 Cookie 和临时音频，不会访问个人浏览器或联网下载视频。
+另行完成过抖音下载、CPU VAD + CUDA ASR、Codex 安装入口，以及 959.5 秒 YouTube 视频的完整浏览器提取和分段转写验证。
 
 目录结构：
 
@@ -179,7 +226,7 @@ python -m pip check
 skills/watch/              通用技能及视频处理脚本
 codex-adapter/              Codex 技能模板、安装脚本和启动器
 benchmarks/                性能测试条件与结果
-tests/                     Cookie 和设备选择回归测试
+tests/                     Cookie、设备、浏览器缓存、转写和安装回归测试
 requirements.txt           Python 依赖
 ```
 
@@ -190,9 +237,11 @@ requirements.txt           Python 依赖
 | `ffmpeg not found` | 安装完整 FFmpeg，并加入 PATH 或通过安装参数指定 |
 | GPU 未启用 | 检查 `torch.cuda.is_available()`，安装与驱动匹配的 torch/torchaudio |
 | 无法启动 Cookie 浏览器 | 安装 Edge，或配置其他浏览器及 Playwright Chromium |
-| 网站要求登录/验证码 | 使用 `--interactive`，由用户完成后重试 |
+| 抖音要求登录/验证码 | 使用 `--interactive`，由用户完成后重试 |
+| YouTube 下载失败或字幕为空 | 使用独立浏览器登录及 `--via-browser`，参见上方流程 |
+| YouTube JS 求解组件缺失 | 检查 [yt-dlp 的 YouTube 依赖](https://github.com/yt-dlp/yt-dlp#dependencies)，或使用浏览器回退 |
 | SenseVoice 分词器加载失败 | 检查 Windows 模型路径，优先使用 ASCII 路径 |
-| 转写没有逐句时间戳 | 当前模型可能返回整段文本，转写文件中的时间精度取决于模型输出 |
+| 转写没有逐句时间戳 | 回退到带 `timestamp_kind: window` 的 60 秒源音频区间，不能视为精确句子时间 |
 
 ## 许可证与致谢
 
